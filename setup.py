@@ -12,10 +12,10 @@ setup(name="kservicemenueditor",
       author_email="servicemenu@davidedmundson.co.uk",
       license="GPLv2",
       scripts=[
-               'servicemenueditor',
+               'kservicemenueditor',
                  ],
       data_files=[
-                  ('share/kde4/apps/servicemenueditor', glob.glob("*.ui")),
-                  ('share/applications/',['servicemenueditor.desktop'])
+                  ('share/kde4/apps/kservicemenueditor', glob.glob("*.ui")),
+                  ('share/applications/',['kservicemenueditor.desktop'])
                  ]
 	  )
