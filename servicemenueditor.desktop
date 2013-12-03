@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=ServiceMenuEditor
+GenericName=Service Menu Editor
+Exec=servicemenueditor
+Type=Application
+Terminal=false
+Icon=preferences-system-session-services
+Categories=Qt;KDE;System;Settings

@@ -1,0 +1,301 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+#Various Comments
+#I was using m_ for method vairables. Not sure why I did that given that I have to use "self." anyway.
+#Some method 'variables'  come from the gui file.
+
+# FIXME list:
+  # calling .click() is generally bad, call relevant methods instead
+  # code will select "all files" if any of the 3 mimes that make up "all files" is selected <- technically a bug
+  # convert mime list from QListWidget to QTreeWidget and have headers of value, description with icon
+  # instead of asking user for a filename, just create one based on the name. (as we already have code that fixes dupes). Will require refactor of init and save for edit dialog
+  # validation (name must be non-blank, exec must contain %u, %U, %f or %F)
+  # make form clearer. Show possible values for Exec box. Explain submenu (empty -> not in submenu)
+
+# Refactor list:
+  # create a "ServiceMenu" object (extend kdesktopfile?)
+  # this will have "load" and "save" methods
+  # buttons populate from values in that.
+  # then we can abstract and share the same servicemenu code between EditEntry dialog and the "SelectEntry" dialog
+
+from PyQt4 import QtCore, QtGui,uic
+from PyKDE4.kdecore import ki18n, KAboutData, KCmdLineArgs , KConfig, KConfigGroup, KDesktopFile, KMimeType, KServiceType, KGlobal
+from PyKDE4.kdeui import *
+from PyKDE4.kio import KIconDialog,KMimeTypeChooserDialog
+import sys,os
+
+#finds (using KDE standard dirs) the .ui files needed for the program
+if True:
+  selectUiFilePath = KGlobal.dirs().findResource('data','servicemenueditor/select.ui')
+  editUiFilePath = KGlobal.dirs().findResource('data','servicemenueditor/edit.ui')
+else:
+  selectUiFilePath="select.ui"
+  editUiFilePath="edit.ui"
+
+#load the UI files from the paths above
+#these are then subclassed by the two dialogs
+try:
+  (ui,baseClass) = uic.loadUiType(selectUiFilePath)
+  (editUi,baseClass) = uic.loadUiType(editUiFilePath)
+except IOError:
+  print "could not find one or more of the required .ui files. Make sure these files are installed to a directory listed by `kde4-config --path data`"
+  sys.exit(0)
+
+#dialog for editing the menus
+class EditEntry(editUi,baseClass):
+	def __init__(self,parent,fileName,newFile=False):
+		editUi.__init__(self)
+		baseClass.__init__(self,parent)
+		self.setupUi(self)
+
+		self.connect(self.m_addWidget,QtCore.SIGNAL("clicked()"),self.addMime)
+		self.connect(self.m_remWidget,QtCore.SIGNAL("clicked()"),self.remMime)
+		self.connect(self.m_actionIcon,QtCore.SIGNAL("clicked()"),self.changeIcon)
+		self.connect(self.m_buttons,QtCore.SIGNAL("accepted()"),self.save)
+
+		self.setWindowIcon(KIcon("preferences-system-session-services"))
+
+		self.m_addWidget.setIcon(KIcon("list-add"))
+		#self.m_addWidget.setText("")
+
+		self.m_remWidget.setIcon(KIcon("list-remove"))
+		self.m_remWidget.setText("")
+
+		self.m_actionSubmenu.setText("")
+		self.m_actionIcon.setText("")
+		self.m_actionIcon.setFixedSize(50,50)	  
+		self.iconName=""
+
+		self.m_actionGroupName="" #init value will be set by self.load if applicable
+		if not newFile:
+			self.load(fileName)
+		self.m_fileName=fileName
+
+		#Disables removing item at start and enables it when something to delete
+		self.m_remWidget.setDisabled(True)
+		self.connect(self.m_mimeList,QtCore.SIGNAL("itemSelectionChanged()"),self.setEnabledRemoveWidget)
+		#Tie viewing of widgets to state of Radiobuttons
+		self.changeEnabledCustom()
+		self.connect(self.m_conditionAll,QtCore.SIGNAL("clicked()"),self.changeEnabledCustom)
+		self.connect(self.m_conditionCustom,QtCore.SIGNAL("clicked()"),self.changeEnabledCustom)
+
+	#Launches mime type chooser dialog. Then adds a mime to the mimetype list. 
+	def addMime(self):
+	  mimeDiag = KMimeTypeChooserDialog()
+	  if mimeDiag.exec_() == KDialog.Accepted:
+		selectedMimeTypes = mimeDiag.chooser().mimeTypes()
+		for mimeType in selectedMimeTypes:
+		  self.m_mimeList.addItem(mimeType)
+
+	#Remove selected mime from the mimetype list
+	def remMime(self):
+	  removeWhat=self.m_mimeList.currentRow()	#-1 if none selected
+	  self.m_mimeList.takeItem(removeWhat)
+          if self.m_mimeList.count()==0:self.m_remWidget.setDisabled(True)
+
+	#Launch a select icon dialog. Update button and store value to instance var
+	def changeIcon(self):
+	  newIcon=KIconDialog.getIcon()
+	  if newIcon:
+		self.m_actionIcon.setIcon(KIcon(newIcon))
+		self.iconName=newIcon
+
+	#Extract data from a .desktop file, and update boxes
+	def load(self,fileName):
+	  config = KDesktopFile(fileName)
+	  desktopGroup=config.desktopGroup()
+	  mimes  = desktopGroup.readEntry("MimeType").replace(';',',').split(',')
+	  mimes += desktopGroup.readEntry("X-KDE-ServiceTypes").replace(';',',').split(',')
+	  mimes += desktopGroup.readEntry("ServiceTypes").replace(';',',').split(',')
+	  self.m_actionSubmenu.setText(desktopGroup.readEntry("X-KDE-Submenu"))		#WRONG NAME
+	  mimes.removeAll('KonqPopupMenu/Plugin')
+	  for i in mimes:
+		if i!="":
+		  self.m_mimeList.addItem(i)
+		  if i not in ["all/all","inode/directory","all/allfiles"]:
+		    print "*",i
+		    self.m_conditionCustom.click()
+	  self.m_actionGroupName=config.readActions()[0]
+	  actionGroup=config.actionGroup(self.m_actionGroupName)
+	  self.m_actionExec.setText(actionGroup.readEntry("Exec"))
+	  self.m_actionName.setText(actionGroup.readEntry("Name"))
+	  self.m_actionIcon.setIcon(KIcon(actionGroup.readEntry("Icon")))
+
+	#Read data from form, and save out to .desktop file
+	def save(self):
+	  print "saving " + self.m_fileName
+	  config=KDesktopFile(str(self.m_fileName))
+	  desktopGroup=config.desktopGroup()
+
+	  desktopGroup.writeEntry("Actions",self.m_actionGroupName+";")
+	  desktopGroup.writeEntry("Type","Service")	
+	  desktopGroup.writeEntry("MimeType","")
+	  desktopGroup.writeEntry("ServiceTypes","")
+	  mimes="KonqPopupMenu/Plugin,"
+
+          if self.m_conditionAll.isChecked():
+	 	mimes=mimes+"inode/directory,all/all,all/allfiles"
+          else:
+    	     for i in range(0,self.m_mimeList.count()):		#Not sure what items needs as an input would allow iteration over objects
+		item=self.m_mimeList.item(i).text()
+         	mimes=mimes+','+item
+	  desktopGroup.writeEntry("X-KDE-ServiceTypes",mimes)
+
+	  actionGroup=config.actionGroup(self.m_actionGroupName)
+	  actionGroup.writeEntry("Name",self.m_actionName.text())
+	  actionGroup.writeEntry("Exec",self.m_actionExec.text())
+	  actionGroup.writeEntry("Icon",self.iconName)
+	  desktopGroup.writeEntry("X-KDE-Submenu",self.m_actionSubmenu.text())
+	  config.sync()
+	  self.accept()
+
+	def setEnabledRemoveWidget(self):
+	  enabled = len(self.m_mimeList.selectedItems()) > 0# true if item selected
+	  if not self.m_mimeList.isEnabled(): #also disable if main list is disabled
+		enabled = False;
+	  self.m_remWidget.setEnabled(enabled)
+
+	def changeEnabledCustom(self):
+	  if self.m_conditionAll.isChecked():
+		for w in [self.m_addWidget,self.m_remWidget,self.m_mimeList]:
+		  w.setEnabled(False)
+	  else:
+		for w in [self.m_addWidget,self.m_mimeList]:
+		  w.setEnabled(True)
+	  self.setEnabledRemoveWidget()
+
+
+
+
+
+##draws a dialog with config options
+class SelectEntry(ui,baseClass):
+	def __init__(self, parent=None):
+		ui.__init__(self)
+		baseClass.__init__(self,parent)  
+		self.setupUi(self)
+		self.populateTable()
+	
+		#set up some icons
+		self.setWindowIcon(KIcon("preferences-system-session-services"))
+
+		self.m_addEntry.setIcon(KIcon("list-add"))
+		self.m_editEntry.setIcon(KIcon("document-edit"))
+		self.m_removeEntry.setIcon(KIcon("list-remove"))
+		self.aboutButton.setIcon(KIcon("preferences-system-session-services"))
+
+		#set up connections
+		self.connect(self.m_addEntry,QtCore.SIGNAL("released()"),self.addEntry)
+		self.connect(self.m_editEntry,QtCore.SIGNAL("released()"),self.editEntry)
+		self.connect(self.m_removeEntry,QtCore.SIGNAL("released()"),self.removeEntry)
+		self.connect(self.m_menuList,QtCore.SIGNAL("itemSelectionChanged()"),self.updateButtons)
+		self.connect(self.aboutButton,QtCore.SIGNAL("released()"),self.showAboutHelp)
+		self.updateButtons()
+
+	#disable or enable the edit/remove buttons depending on whether an item has been selected
+	def updateButtons(self):
+	  enabled = len(self.m_menuList.selectedItems()) > 0
+	  self.m_removeEntry.setEnabled(enabled)
+	  self.m_editEntry.setEnabled(enabled)
+
+	#show the "About Service Menu Editor" dialog
+	def showAboutHelp(self):
+	  d = KAboutApplicationDialog(aboutData)
+	  d.exec_()
+
+	#find a unique filename for the project, and launch the "edit dialog"
+	def addEntry(self):
+	  #Get a filename
+	  actionGroupName=""
+	  while not actionGroupName:
+		result=QtGui.QInputDialog.getText(self,"New Service Menu","Please enter an ID for the project. This is used as the filename for the project. It will not be seen by the user.")
+		#if user clicked cancel
+		if(result[1]==False):
+			  return
+
+		fileNameNumber=1		#Adds a number to the file if appropiate
+		serviceMenuPath = KGlobal.dirs().saveLocation("services")+"/ServiceMenus/"
+		fileName = serviceMenuPath + result[0]+".desktop"
+		while QtCore.QFile.exists(fileName):		
+			fileName=serviceMenuPath + result[0] + str(fileNameNumber)+".desktop"
+			fileNamenumber=fileNameNumber+1
+
+		actionGroupName=result[0]
+
+	  d=EditEntry(self,fileName,True)
+	  d.m_actionGroupName=actionGroupName
+	  d.exec_()
+ 	  self.populateTable()
+
+	#tries deleting the selected file
+	def removeEntry(self):
+	  fileName = self.m_menuList.selectedItems()[0].data(3).toString()
+	  confirmDialog=QtGui.QMessageBox(QtGui.QMessageBox.Question,
+		"Removing option",
+		("Are you sure you want to remove\n" + self.m_menuList.selectedItems()[0].text()),
+		QtGui.QMessageBox.Ok | QtGui.QMessageBox.Cancel)
+
+          if confirmDialog.exec_() == QtGui.QMessageBox.Ok:
+         	  print "removing entry"
+		  try:
+			os.unlink(fileName)
+		  except:
+			pass
+ 	  self.populateTable()
+
+	#launch the edit dialog for the selected item
+	def editEntry(self):
+	  fileName = self.m_menuList.selectedItems()[0].data(3).toString()
+	  d=EditEntry(self,fileName)
+	  d.exec_()
+ 	  self.populateTable()
+
+	#updates the table with a list of all menus it can find
+	def populateTable(self):
+          self.m_menuList.clear()
+	  for desktopFile in KGlobal.dirs().findAllResources("services","ServiceMenus/*.desktop"):
+		config = KDesktopFile(desktopFile)
+		desktopGroup = config.desktopGroup()
+
+		for action in config.readActions():
+		  actionGroup=config.actionGroup(action)
+		  name = actionGroup.readEntry("Name")
+		  icon = actionGroup.readEntry("Icon")
+		  writeable = config.isConfigWritable(False)
+		  self.insertMenuItem(desktopFile,name,icon,writeable)
+	
+	#adds an item into the list widget
+	def insertMenuItem(self,fileName,actionName,iconName,writeable):
+	  if not writeable:
+		actionName += " (read only)"
+	  item=QtGui.QListWidgetItem(KIcon(iconName),actionName)
+	  item.setData(3,QtCore.QVariant(fileName))
+	  self.m_menuList.addItem(item)
+
+
+if __name__ == '__main__':
+  appName     = "KApplication"
+  catalog     = ""
+  programName = ki18n ("KServiceMenu")
+  version     = "0.2"
+  description = ki18n ("A Graphical Service Menu Editor")
+  license     = KAboutData.License_GPL_V2
+  copyright   = ki18n ("(c) 2008 David Edmundson")
+  text        = ki18n ("")
+  homePage    = "http://www.sharpley.org.uk/page/software/servicemenu"
+  bugEmail    = "servicemenu@davidedmundson.co.uk"
+  
+  aboutData   = KAboutData (appName, catalog, programName, version, description, license, copyright, text, homePage, bugEmail)
+
+  aboutData.setProgramIconName("preferences-system-session-services")
+  aboutData.addAuthor(ki18n("David Edmundson"),ki18n("Lead programmer"),"kde@davidedmundson.co.uk","http://sharpley.org.uk")
+  aboutData.addAuthor(ki18n("Johnmark Edmundson"),ki18n("General Code Monkey"))
+
+
+  KCmdLineArgs.init (sys.argv, aboutData)
+  app = KApplication()
+  widget=SelectEntry()
+  #widget.setWindowModality(QtCore.Qt.WindowModal)ad
+  widget.show()
+  sys.exit(app.exec_())
