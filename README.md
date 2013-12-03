@@ -1,4 +1,4 @@
-kservicemenu
-============
+kservicemenueditor
+==================
 
 KDE Service Menu Editor
